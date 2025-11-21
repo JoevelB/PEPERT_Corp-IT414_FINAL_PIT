@@ -3,7 +3,7 @@
 #include <MFRC522.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <PubSubClient.h> // REQUIRED: Install "PubSubClient" by Nick O'Leary
+#include <PubSubClient.h> 
 
 #define SS_PIN    5
 #define RST_PIN   22
@@ -11,17 +11,17 @@
 
 MFRC522 rfid(SS_PIN, RST_PIN);
 
-// --- WIFI SETTINGS ---
+
 const char* known_ssids[] = { "GFiber_ED5A7" };
 const char* known_passwords[] = { "8D442C5D" };
 const int num_known_networks = sizeof(known_ssids) / sizeof(known_ssids[0]);
 
-// --- SERVER / DATABASE SETTINGS ---
-const char* serverIP = "192.168.254.103"; // IP for XAMPP (PHP)
+
+const char* serverIP = "192.168.254.103"; 
 String serverPath = "/lab2/check_rfid.php";
 
-// --- MQTT SETTINGS (NEW) ---
-const char* mqtt_server = "192.168.254.103"; // IP of Laptop with Mosquitto/MQTTX
+
+const char* mqtt_server = "192.168.254.103"; 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
@@ -113,12 +113,12 @@ void connectToFastestWiFi() {
   }
 }
 
-// --- NEW FUNCTION: MQTT RECONNECT ---
+
 void reconnect() {
-  // Loop until we're reconnected
+ 
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
+  
     if (client.connect("ESP32_RFID_Sender")) { 
       Serial.println("connected");
     } else {
@@ -139,14 +139,14 @@ void setup() {
   
   connectToFastestWiFi();
 
-  // Setup MQTT Server
+ 
   client.setServer(mqtt_server, 1883);
   
   Serial.println(F("RFID reader ready. Place your card near the reader..."));
 }
 
 void loop() {
-  // Ensure MQTT is connected
+ 
   if (!client.connected()) {
     reconnect();
   }
