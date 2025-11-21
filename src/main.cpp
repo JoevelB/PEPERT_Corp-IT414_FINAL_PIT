@@ -3,6 +3,7 @@
 #include <MFRC522.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <PubSubClient.h> 
 
 #define SS_PIN    5
 #define RST_PIN   22
@@ -10,12 +11,18 @@
 
 MFRC522 rfid(SS_PIN, RST_PIN);
 
-const char* known_ssids[] = { "PLDTHOMEFIBERb6af8" };
-const char* known_passwords[] = { "PLDTWIFI9d75e" };
+const char* known_ssids[] = { "GFiber_ED5A7" };
+const char* known_passwords[] = { "8D442C5D" };
 const int num_known_networks = sizeof(known_ssids) / sizeof(known_ssids[0]);
 
-const char* serverIP = "192.168.1.9";
+
+const char* serverIP = "192.168.254.103"; 
 String serverPath = "/lab2/check_rfid.php";
+
+
+const char* mqtt_server = "192.168.254.103"; 
+WiFiClient espClient;
+PubSubClient client(espClient);
 
 byte lastUID[10];
 byte lastUIDSize = 0;
@@ -101,7 +108,23 @@ void connectToFastestWiFi() {
       Serial.println(F("Failed to connect to WiFi."));
     }
   } else {
-    Serial.println(F("No known WiFi networks available to connect."));
+    Serial.println(F("No known WiFi networks available."));
+  }
+}
+
+
+void reconnect() {
+  
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    if (client.connect("ESP32_RFID_Sender")) { 
+      Serial.println("connected");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 2 seconds");
+      delay(2000);
+    }
   }
 }
 
@@ -111,11 +134,20 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
   SPI.begin();
   rfid.PCD_Init();
+  
   connectToFastestWiFi();
+
+ 
+  client.setServer(mqtt_server, 1883);
   Serial.println(F("RFID reader ready. Place your card near the reader..."));
 }
 
 void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
   if (millis() - lastStatusTime > 5000) {
     Serial.println(F("Waiting for RFID card..."));
     lastStatusTime = millis();
@@ -139,7 +171,6 @@ void loop() {
 
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    // ❌ Removed encoding — send plain readable UID
     String url = "http://" + String(serverIP) + serverPath + "?uid=" + uidStr;
 
     Serial.print("Requesting: ");
@@ -153,13 +184,24 @@ void loop() {
       Serial.print("Server response: ");
       Serial.println(payload);
 
+     
       if (payload.startsWith("FOUND|")) {
         int status = payload.substring(6).toInt();
-        int displayValue = (status == 0) ? 1 : 0;
+        int displayValue = (status == 0) ? 0 : 1;
+        
         Serial.print("RFID FOUND. DB status=");
         Serial.print(status);
         Serial.print(" -> DISPLAY: ");
         Serial.println(displayValue);
+
+
+        char mqtt_payload[2];
+        itoa(displayValue, mqtt_payload, 10);
+        client.publish("RFID_LOGIN", mqtt_payload); 
+        Serial.print("Published to MQTT: ");
+        Serial.println(mqtt_payload);
+        // -------------------------------------
+
         blinkLED(2, 150);
       } else if (payload.startsWith("NOTFOUND")) {
         Serial.println("RFID NOT REGISTERED in DB.");
