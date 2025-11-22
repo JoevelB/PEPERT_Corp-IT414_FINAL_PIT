@@ -1,8 +1,4 @@
-view_logs.php
-
 <?php
-
-// index.php - RFID Dashboard with safe scan toggle
 
 $DB_HOST = 'localhost';
 $DB_USER = 'root';
@@ -12,15 +8,12 @@ $DB_NAME = 'pepert_corps_db';
 $conn = new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
 if ($conn->connect_error) die("DB Connection failed: " . $conn->connect_error);
 
-// --------------------
-// SCAN HANDLER
-// --------------------
+// --- HANDLE SCANNING ---
 if (isset($_REQUEST['scan'])) {
     $scanRfid = $conn->real_escape_string(trim($_REQUEST['scan']));
     $conn->begin_transaction();
 
     try {
-        // Get current status of registered RFID (if exists)
         $qr = $conn->query("SELECT rfid_status FROM rfid_reg WHERE rfid_data='$scanRfid' LIMIT 1");
         $isRegistered = false;
         $currentStatus = null;
@@ -30,21 +23,24 @@ if (isset($_REQUEST['scan'])) {
             $currentStatus = (int)$qr->fetch_assoc()['rfid_status'];
             $newStatus = ($currentStatus === 1) ? 0 : 1;
         } else {
-            $newStatus = -1; // Unregistered
+            // FIX 1: Use string "NULL" so SQL inserts a real null value
+            $newStatus = "NULL"; 
         }
 
-        // Get last log status
         $lastLogQ = $conn->query("SELECT rfid_status FROM rfid_logs WHERE rfid_data='$scanRfid' ORDER BY id DESC LIMIT 10");
-        $lastStatus = null;
+        $lastStatus = -999; // Use a fake number that isn't 0 or 1
         if ($lastLogQ && $lastLogQ->num_rows > 0) {
-            $lastStatus = (int)$lastLogQ->fetch_assoc()['rfid_status'];
+             $row = $lastLogQ->fetch_assoc();
+             // Handle if the last log was NULL
+             $lastStatus = ($row['rfid_status'] === null) ? "NULL" : (int)$row['rfid_status'];
         }
 
-        // Only insert log if new status is different from last log
+        // Only insert if status is different
         if ($newStatus !== $lastStatus) {
             if ($isRegistered) {
                 $conn->query("UPDATE rfid_reg SET rfid_status=$newStatus WHERE rfid_data='$scanRfid'");
             }
+            // Insert Query ($newStatus will be 0, 1, or "NULL")
             $conn->query("INSERT INTO rfid_logs (rfid_data, rfid_status, time_log) VALUES ('$scanRfid', $newStatus, NOW())");
         }
 
@@ -58,30 +54,24 @@ if (isset($_REQUEST['scan'])) {
     exit();
 }
 
-
-// --------------------
-// FETCH DATA FOR UI
-// --------------------
-
-// Registered RFIDs
+// --- FETCH DATA ---
 $rfids = [];
 $rfidResult = $conn->query("SELECT rfid_data, rfid_status FROM rfid_reg ORDER BY rfid_data ASC");
 if ($rfidResult && $rfidResult->num_rows > 0) {
     while ($row = $rfidResult->fetch_assoc()) $rfids[] = $row;
 }
 
-// Last 10 logs
 $logs = [];
 $logResult = $conn->query("SELECT * FROM rfid_logs ORDER BY id DESC");
 if ($logResult && $logResult->num_rows > 0) {
     while ($row = $logResult->fetch_assoc()) $logs[] = $row;
 }
 
-// Status label helper
+// FIX 2: Strict check for NULL in label function
 function statusLabel($status) {
-    if ($status == 1) return "0";
-    if ($status == 0) return "1";
-    if ($status == -1) return "RFID NOT FOUND";
+    if ($status === null) return "RFID NOT FOUND"; // Must be triple =
+    if ($status == 0) return "0";
+    if ($status == 1) return "1";
     return "UNKNOWN";
 }
 ?>
@@ -113,7 +103,7 @@ th { background: #333; }
 tr:nth-child(even) { background: #2a2a2a; }
 .status-login { color: #4CAF50; font-weight: bold; }
 .status-logout { color: #2196F3; font-weight: bold; }
-.status-denied { color: #E53935; font-weight: bold; }
+.status-denied { color: #ff0702ff; font-weight: bold; } /* This is RED */
 @media (max-width: 768px) { .container { flex-direction: column; } .left-panel { width: 100%; } .right-panel { width: 100%; margin-top: 15px; } }
 </style>
 </head>
@@ -121,13 +111,12 @@ tr:nth-child(even) { background: #2a2a2a; }
 
 <div class="container">
 
-    <!-- LEFT PANEL: Registered RFID Status -->
     <div class="left-panel">
         <h3>RFID</h3>
         <?php foreach ($rfids as $row):
             $rfid = $row['rfid_data'];
             $status = (int)$row['rfid_status'];
-            $checked = ($status === 0) ? "checked" : "";
+            $checked = ($status === 1) ? "checked" : "";
         ?>
         <div class="rfid-item">
             <span><?= htmlspecialchars($rfid) ?></span>
@@ -139,7 +128,6 @@ tr:nth-child(even) { background: #2a2a2a; }
         <?php endforeach; ?>
     </div>
 
-    <!-- RIGHT PANEL: Last 10 Logs -->
     <div class="right-panel">
         <table>
             <thead>
@@ -153,8 +141,14 @@ tr:nth-child(even) { background: #2a2a2a; }
             <?php if (!empty($logs)): ?>
                 <?php foreach ($logs as $row):
                     $statusText = statusLabel($row['rfid_status']);
-                    $statusClass = $row['rfid_status'] == 1 ? 'status-login' :
-                                   ($row['rfid_status'] == 0 ? 'status-logout' : 'status-denied');
+                    
+                    if ($row['rfid_status'] === null) {
+                        $statusClass = 'status-denied'; 
+                    } elseif ($row['rfid_status'] == 1) {
+                        $statusClass = 'status-login'; 
+                    } else {
+                        $statusClass = 'status-logout'; 
+                    }
                 ?>
                 <tr>
                     <td><?= htmlspecialchars($row['rfid_data']) ?></td>

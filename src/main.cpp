@@ -5,39 +5,29 @@
 #include <HTTPClient.h>
 #include <PubSubClient.h> 
 
+// Maoy mag ingon nga ang pin sa reader kay naka connect sa GPIO 5 og 22
 #define SS_PIN    5
 #define RST_PIN   22
-#define LED_PIN   2
 
 MFRC522 rfid(SS_PIN, RST_PIN);
 
-const char* known_ssids[] = { "GFiber_ED5A7" };
-const char* known_passwords[] = { "8D442C5D" };
-const int num_known_networks = sizeof(known_ssids) / sizeof(known_ssids[0]);
-
+const char* ssid = "GFiber_ED5A7";
+const char* password = "8D442C5D";
 
 const char* serverIP = "192.168.254.103"; 
 String serverPath = "/lab2/check_rfid.php";
-
 
 const char* mqtt_server = "192.168.254.103"; 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
+// Mo ning mag remember sa last scanned UID
 byte lastUID[10];
 byte lastUIDSize = 0;
 unsigned long lastReadTime = 0;
 unsigned long lastStatusTime = 0;
 
-void blinkLED(int times, int delayMs) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(LED_PIN, HIGH);
-    delay(delayMs);
-    digitalWrite(LED_PIN, LOW);
-    delay(delayMs);
-  }
-}
-
+// Ga convert ni siya from raw bytes to string
 String uidToString() {
   String uid = "";
   for (byte i = 0; i < rfid.uid.size; i++) {
@@ -59,6 +49,7 @@ void printUID() {
   Serial.println();
 }
 
+//ga check kung pareha na card ang gina scan
 bool isSameCard() {
   if (rfid.uid.size != lastUIDSize) return false;
   for (byte i = 0; i < rfid.uid.size; i++) {
@@ -67,60 +58,33 @@ bool isSameCard() {
   return true;
 }
 
-void connectToFastestWiFi() {
-  Serial.println(F("Scanning for WiFi..."));
-  int n = WiFi.scanNetworks();
-  if (n == 0) {
-    Serial.println(F("No WiFi networks found."));
-    return;
+
+void setupWifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
   }
 
-  int best_network_index = -1;
-  long best_rssi = -200;
-  for (int i = 0; i < n; i++) {
-    String scanned_ssid = WiFi.SSID(i);
-    long scanned_rssi = WiFi.RSSI(i);
-    for (int j = 0; j < num_known_networks; j++) {
-      if (scanned_ssid.equals(known_ssids[j])) {
-        if (scanned_rssi > best_rssi) {
-          best_rssi = scanned_rssi;
-          best_network_index = j;
-        }
-      }
-    }
-  }
-
-  if (best_network_index != -1) {
-    WiFi.begin(known_ssids[best_network_index], known_passwords[best_network_index]);
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-      delay(500);
-      Serial.print(".");
-      attempts++;
-    }
-    Serial.println();
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.print(F("Connected to "));
-      Serial.print(WiFi.SSID());
-      Serial.print(" | IP: ");
-      Serial.println(WiFi.localIP());
-    } else {
-      Serial.println(F("Failed to connect to WiFi."));
-    }
-  } else {
-    Serial.println(F("No known WiFi networks available."));
-  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
 }
 
-
 void reconnect() {
-  
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     if (client.connect("ESP32_RFID_Sender")) { 
       Serial.println("connected");
     } else {
-      Serial.print("failed, rc=");
+      Serial.print("failed, rc = ");
       Serial.print(client.state());
       Serial.println(" try again in 2 seconds");
       delay(2000);
@@ -130,19 +94,18 @@ void reconnect() {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
   SPI.begin();
   rfid.PCD_Init();
   
-  connectToFastestWiFi();
+  setupWifi(); 
 
- 
+  // e initialize mqtt diri
   client.setServer(mqtt_server, 1883);
   Serial.println(F("RFID reader ready. Place your card near the reader..."));
 }
 
 void loop() {
+  // para ma maintain ang mqtt connection
   if (!client.connected()) {
     reconnect();
   }
@@ -153,10 +116,12 @@ void loop() {
     lastStatusTime = millis();
   }
 
+  
   if (!rfid.PICC_IsNewCardPresent()) return;
   if (!rfid.PICC_ReadCardSerial()) return;
 
   String uidStr = uidToString();
+  // ignore niya kung pareha ra nga card ang gina scan within 2 seconds
   if (millis() - lastReadTime < 2000 && isSameCard()) {
     rfid.PICC_HaltA();
     rfid.PCD_StopCrypto1();
@@ -184,31 +149,26 @@ void loop() {
       Serial.print("Server response: ");
       Serial.println(payload);
 
-     
       if (payload.startsWith("FOUND|")) {
         int status = payload.substring(6).toInt();
         int displayValue = (status == 0) ? 0 : 1;
         
-        Serial.print("RFID FOUND. DB status=");
+        Serial.print("RFID FOUND. DB status = ");
         Serial.print(status);
         Serial.print(" -> DISPLAY: ");
         Serial.println(displayValue);
 
-
+        // send og command sa mqtt broker
         char mqtt_payload[2];
         itoa(displayValue, mqtt_payload, 10);
         client.publish("RFID_LOGIN", mqtt_payload); 
         Serial.print("Published to MQTT: ");
         Serial.println(mqtt_payload);
-        // -------------------------------------
-
-        blinkLED(2, 150);
-      } else if (payload.startsWith("NOTFOUND")) {
+                
+      } else if (payload.startsWith("NOT FOUND")) {
         Serial.println("RFID NOT REGISTERED in DB.");
-        blinkLED(3, 100);
-      } else {
-        Serial.println("Unexpected response: " + payload);
-      }
+        
+      } 
     } else {
       Serial.print("HTTP Request failed, error: ");
       Serial.println(http.errorToString(httpCode));
@@ -216,9 +176,10 @@ void loop() {
     http.end();
   } else {
     Serial.println("WiFi not connected. Retrying...");
-    connectToFastestWiFi();
+    setupWifi(); 
   }
 
+  // stop reading
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
   delay(500);
